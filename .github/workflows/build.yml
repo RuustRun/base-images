@@ -1,4 +1,4 @@
-# Build and publish the Ruust managed database base images to GHCR (public).
+# Build and publish the Ruust managed base images to GHCR (public).
 #
 # Each engine and major version is built from its Dockerfile (FROM the official
 # image + our thin layer) and pushed to ghcr.io/ruustrun/<engine>:<version>, which
@@ -45,6 +45,11 @@ jobs:
           - { engine: postgres, version: '14' }
           - { engine: redis, version: '7' }
           - { engine: redis, version: '6' }
+          # Ollama has no major-version line we want to track, so we mirror upstream
+          # `latest` and publish it as our own `0`, which moves only when this
+          # workflow runs. `tag` overrides the published tag; the others publish at
+          # their version.
+          - { engine: ollama, version: 'latest', tag: '0' }
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -56,8 +61,9 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="${REGISTRY}/${OWNER}/${{ matrix.engine }}"
-          docker build --build-arg VERSION=${{ matrix.version }} -t "${IMAGE}:${{ matrix.version }}" "${{ matrix.engine }}"
-          docker push "${IMAGE}:${{ matrix.version }}"
+          TAG="${{ matrix.tag || matrix.version }}"
+          docker build --build-arg VERSION=${{ matrix.version }} -t "${IMAGE}:${TAG}" "${{ matrix.engine }}"
+          docker push "${IMAGE}:${TAG}"
           echo "Published ${IMAGE}:${{ matrix.version }}"
 
   publicise:
@@ -70,10 +76,10 @@ jobs:
         # New GHCR packages are private by default; the fleet has no credentials, so
         # the packages must be public. The default GITHUB_TOKEN often cannot change
         # org package visibility, so this is best effort: if it does not take, set
-        # each package public once in the GHCR UI (Packages > postgres / redis >
-        # visibility). It stays public through future pushes.
+        # each package public once in the GHCR UI (Packages > postgres / redis /
+        # ollama > visibility). It stays public through future pushes.
         run: |
-          for pkg in postgres redis; do
+          for pkg in postgres redis ollama; do
             curl -sS -X PATCH \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
