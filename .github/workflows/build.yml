@@ -50,6 +50,10 @@ jobs:
           - { engine: postgres, version: '16' }
           - { engine: postgres, version: '15' }
           - { engine: postgres, version: '14' }
+          # Redis 8 is the first release to offer AGPLv3 alongside RSALv2/SSPLv1.
+          # 7.4 (which the `7` tag resolves to) offers only the latter two, and both
+          # restrict offering the software as a managed service, which is what we do.
+          - { engine: redis, version: '8' }
           - { engine: redis, version: '7' }
           - { engine: redis, version: '6' }
           # Ollama has no major-version line we want to track, so we mirror upstream
