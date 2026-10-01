@@ -49,6 +49,12 @@ jobs:
           - { engine: postgres, version: '17' }
           - { engine: postgres, version: '16' }
           - { engine: postgres, version: '15' }
+          # 14 is RETIRED from the control plane's offer list: no new Egg can be
+          # created on it. Still mirrored, deliberately, so the Eggs already running it
+          # keep receiving upstream patches until Postgres 14 reaches end of life on
+          # 2026-11-12, including the final 14.x. DROP THIS LINE after that date: past
+          # EOL there are no more patches to carry and rebuilding only republishes the
+          # same known-vulnerable image.
           - { engine: postgres, version: '14' }
           # Redis 8 is the first release to offer AGPLv3 alongside RSALv2/SSPLv1.
           # 7.4 (which the `7` tag resolves to) offers only the latter two, and both

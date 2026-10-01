@@ -15,9 +15,14 @@ defaults over time.
 
 | Image | Tags | Base |
 | --- | --- | --- |
-| `ghcr.io/ruustrun/postgres` | `18`, `17`, `16`, `15`, `14` | `postgres:<version>` |
+| `ghcr.io/ruustrun/postgres` | `18`, `17`, `16`, `15`, `14`&nbsp;[^pg14] | `postgres:<version>` |
 | `ghcr.io/ruustrun/redis` | `8`, `7`, `6` | `redis:<version>` |
 | `ghcr.io/ruustrun/ollama` | `0` | `ollama/ollama:latest` |
+
+[^pg14]: Still mirrored, but **retired from the control plane's offer list**: no new
+Egg can be created on 14. It is kept here so the Eggs already running it receive
+upstream patches until Postgres 14 reaches end of life on **2026-11-12**. Drop it from
+the matrix after that date.
 
 Each starts `FROM` the official image, so we track upstream and add our own thin
 layer on top. Ollama has no major-version line worth tracking, so its `0` tag
