@@ -40,6 +40,11 @@ jobs:
       matrix:
         include:
           # Kept in step with DATABASE_ENGINES.versions in the control plane.
+          # Publish a version HERE before adding it there: the control plane builds the
+          # image ref from the tag, so a version offered before its tag exists gives a
+          # DB Egg that cannot pull.
+          - { engine: postgres, version: '18' }
+          - { engine: postgres, version: '17' }
           - { engine: postgres, version: '16' }
           - { engine: postgres, version: '15' }
           - { engine: postgres, version: '14' }
