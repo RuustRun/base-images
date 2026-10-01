@@ -33,6 +33,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Trivy results go to the Security tab.
+      security-events: write
     strategy:
       fail-fast: false
       # Serialise: a burst of fresh-package blob uploads trips GHCR's rate limit.
@@ -62,14 +64,51 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build and push ${{ matrix.engine }}:${{ matrix.version }}
+      - name: Build ${{ matrix.engine }}:${{ matrix.version }}
         run: |
           set -euo pipefail
           IMAGE="${REGISTRY}/${OWNER}/${{ matrix.engine }}"
           TAG="${{ matrix.tag || matrix.version }}"
           docker build --build-arg VERSION=${{ matrix.version }} -t "${IMAGE}:${TAG}" "${{ matrix.engine }}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+
+      # Scanned, and deliberately NOT gated on. These images are a passthrough of the
+      # official ones: when upstream ships a fixable CVE we cannot patch it here, so
+      # failing the job would only withhold the OTHER versions' patches from the same
+      # rebuild while making nothing safer. The freshly built image is never worse than
+      # the one already in the registry, so it publishes either way and the finding
+      # goes to the Security tab, where it is visible and keeps its history.
+      #
+      # What a finding actually means: upstream has a fix we are not carrying yet, so
+      # either the rebuild needs running sooner, or that major is old enough to retire
+      # from DATABASE_ENGINES.
+      - name: Scan ${{ matrix.engine }}:${{ matrix.version }}
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ env.TAG }}
+          format: sarif
+          output: trivy-${{ matrix.engine }}-${{ matrix.version }}.sarif
+          severity: HIGH,CRITICAL
+          # Vulnerabilities only: a base image inherits its distro's config defaults
+          # and those are not ours to change.
+          scanners: vuln
+          # Unfixed CVEs are noise we can do nothing about. A FIXABLE one is the
+          # signal: upstream has a patch and we are not carrying it.
+          ignore-unfixed: true
+          exit-code: '0'
+
+      - name: File the findings under Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.engine }}-${{ matrix.version }}.sarif
+          category: trivy-${{ matrix.engine }}-${{ matrix.version }}
+
+      - name: Push ${{ matrix.engine }}:${{ matrix.version }}
+        run: |
+          set -euo pipefail
           docker push "${IMAGE}:${TAG}"
-          echo "Published ${IMAGE}:${{ matrix.version }}"
+          echo "Published ${IMAGE}:${TAG}"
 
   publicise:
     needs: build

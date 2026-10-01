@@ -1,0 +1,123 @@
+# Watch upstream for major versions we are not mirroring yet.
+#
+# This is the job that should have noticed we were two majors behind on Postgres.
+# Nobody did: it took a customer looking at the create screen and telling us. A
+# version list is exactly the kind of thing that is correct the day it is written and
+# quietly wrong a year later, because nothing ever asks it again.
+#
+# It compares the major versions on Docker Hub with the ones in our build matrix and
+# opens (or updates) a single issue when upstream is ahead. It never changes the
+# matrix itself: adding a major means deciding whether to carry it, and whether it
+# becomes the default, which is a judgement rather than a bump.
+#
+# British English. No em dashes.
+name: Upstream version watch
+
+on:
+  schedule:
+    # Weekly. Majors land about once a year, so this is less about speed than about
+    # the question being asked at all.
+    - cron: '41 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare upstream majors with our matrix
+        id: check
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, re, urllib.request
+
+          # The engines we mirror by major version. Ollama is excluded on purpose: we
+          # track its `latest` rather than a major line (see the build matrix).
+          ENGINES = {"postgres": "postgres", "redis": "redis"}
+
+          matrix = open(".github/workflows/build.yml").read()
+
+          def ours(engine):
+              found = re.findall(
+                  r"\{\s*engine:\s*%s,\s*version:\s*'([0-9]+)'" % engine, matrix)
+              return sorted({int(v) for v in found})
+
+          def upstream(repo):
+              """Major versions with a bare numeric tag on Docker Hub, e.g. '17'."""
+              majors, url = set(), (
+                  "https://hub.docker.com/v2/repositories/library/%s/tags"
+                  "?page_size=100&ordering=last_updated" % repo)
+              for _ in range(4):               # a few pages is plenty for bare majors
+                  with urllib.request.urlopen(url, timeout=30) as r:
+                      page = json.load(r)
+                  for t in page.get("results", []):
+                      if re.fullmatch(r"[0-9]+", t["name"]):
+                          majors.add(int(t["name"]))
+                  url = page.get("next")
+                  if not url:
+                      break
+              return sorted(majors)
+
+          lines, behind = [], False
+          for engine, repo in ENGINES.items():
+              mine, theirs = ours(engine), upstream(repo)
+              missing = [v for v in theirs if mine and v > max(mine)]
+              if missing:
+                  behind = True
+                  lines.append(
+                      "- **%s**: we mirror up to **%d**, upstream has **%s**"
+                      % (engine, max(mine), ", ".join(str(v) for v in missing)))
+              else:
+                  lines.append("- %s: up to date (latest major %s)"
+                               % (engine, max(theirs) if theirs else "unknown"))
+
+          print("behind=%s" % str(behind).lower())
+          print("report<<EOF")
+          print("\n".join(lines))
+          print("EOF")
+          PY
+
+      - name: Open or update the issue
+        if: steps.check.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT: ${{ steps.check.outputs.report }}
+        run: |
+          set -euo pipefail
+          TITLE="Upstream has a newer major than we mirror"
+          BODY=$(cat <<EOF
+          $REPORT
+
+          Adding a major is two steps, in this order:
+
+          1. Add it to the build matrix in \`.github/workflows/build.yml\` and let this
+             repo publish the tag. The control plane builds the image ref straight from
+             the tag, so offering a version before its tag exists leaves a database Egg
+             that cannot pull.
+          2. Add it to \`DATABASE_ENGINES.versions\` in the control plane, newest first.
+             Think about \`defaultVersion\` separately: it is inherited by anything that
+             creates a database without naming a version, including the paired Postgres
+             in a game stack.
+
+          Existing Eggs keep the major they were created with; changing it needs a dump
+          and restore. This only reaches newly created ones.
+
+          Raised automatically by \`upstream-version-watch\`.
+          EOF
+          )
+          # One issue, reused: a weekly job that opens a fresh one every Monday is a job
+          # people start ignoring by the third week.
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Commented on existing issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --label "security,dependencies" 2>/dev/null \
+              || gh issue create --title "$TITLE" --body "$BODY"
+          fi
